@@ -11,19 +11,24 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
   const formatDate = (dateStr) => new Date(dateStr).toLocaleDateString('fr-FR');
 
   const handleFinalSubmit = async () => {
+    // 1. Validation de sécurité : le paraphe est obligatoire
     if (!isParaphed) {
-      alert("Veuillez apposer votre paraphe (initiales) dans la zone bleue.");
+      alert("Veuillez apposer votre paraphe (initiales) dans la zone bleue avant de signer.");
       return;
     }
 
+    // 2. Validation de sécurité : la signature est obligatoire
     if (signatureCanvas.current.isEmpty()) {
-      alert("La signature finale est obligatoire.");
+      alert("La signature finale est obligatoire pour valider le contrat.");
       return;
     }
 
     setIsSubmitting(true);
+    
+    // Capture de la signature sous forme d'image Base64
     const signatureImage = signatureCanvas.current.getTrimmedCanvas().toDataURL('image/png');
 
+    // 3. Enregistrement dans Supabase
     const { error } = await supabase.from('contracts').insert([{
       employee_id: employee.id,
       contract_date: contract.start_date,
@@ -38,7 +43,7 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
       alert("Erreur lors de l'enregistrement : " + error.message);
       setIsSubmitting(false);
     } else {
-      alert("Contrat officialisé avec succès !");
+      alert("Contrat officialisé avec succès dans la base de données !");
       onConfirm();
     }
   };
@@ -64,7 +69,7 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
           Fin : {formatDate(contract.end_date)} à {contract.end_time}.</p>
         </section>
 
-        {/* ZONE DE PARAPHE */}
+        {/* ZONE DE PARAPHE (BLEUE) */}
         <div style={parapheContainer}>
           <p style={{ fontSize: '12px', marginBottom: '5px', fontWeight: 'bold' }}>Paraphe (Initiales) :</p>
           <div style={canvasBorder}>
@@ -84,7 +89,7 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
           Total brut estimé : {contract.total_amount} €.</p>
         </section>
 
-        {/* ZONE DE SIGNATURE FINALE */}
+        {/* ZONE DE SIGNATURE FINALE (NOIRE) */}
         <div style={signatureContainer}>
           <p style={{ fontWeight: 'bold', marginBottom: '10px' }}>Signature finale du salarié :</p>
           <div style={canvasBorder}>
@@ -112,6 +117,7 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
   );
 };
 
+// --- STYLES ---
 const containerStyle = { maxWidth: '600px', margin: 'auto', padding: '20px', backgroundColor: '#fff', border: '1px solid #ccc', borderRadius: '8px' };
 const headerStyle = { textAlign: 'center', fontSize: '18px', textDecoration: 'underline', marginBottom: '15px' };
 const scrollBox = { height: '450px', overflowY: 'scroll', border: '1px solid #eee', padding: '15px', backgroundColor: '#f9f9f9' };
