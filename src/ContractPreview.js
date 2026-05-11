@@ -10,7 +10,6 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
 
   const formatDate = (dateStr) => new Date(dateStr).toLocaleDateString('fr-FR');
 
-  // Fonction pour récupérer l'IP et envoyer les données
   const handleFinalSubmit = async () => {
     if (!isParaphed) {
       alert("Veuillez apposer votre paraphe (initiales) dans la zone bleue.");
@@ -25,54 +24,63 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
     setIsSubmitting(true);
 
     try {
-      // 1. Récupération de l'adresse IP
+      // 1. Récupération de l'adresse IP (avec fallback pour ne pas bloquer l'envoi)
       let userIp = "0.0.0.0";
       try {
         const ipRes = await fetch('https://api.ipify.org?format=json');
-        const ipData = await ipRes.json();
-        userIp = ipData.ip;
+        if (ipRes.ok) {
+          const ipData = await ipRes.json();
+          userIp = ipData.ip;
+        }
       } catch (e) {
-        console.error("Erreur récupération IP", e);
+        console.warn("Impossible de récupérer l'IP, utilisation du fallback.");
       }
 
-      // 2. Préparation de l'heure locale (Fuseau horaire de l'appareil)
-      // On crée une date qui simule l'heure locale pour l'enregistrement
+      // 2. Gestion de l'heure locale exacte (ISO avec décalage local)
       const now = new Date();
-      const offset = now.getTimezoneOffset() * 60000;
-      const localISOTime = (new Date(now - offset)).toISOString().slice(0, -1);
+      const tzOffset = now.getTimezoneOffset() * 60000; 
+      const localISOTime = new Date(now - tzOffset).toISOString();
 
       // 3. Capture de la signature
       const signatureImage = signatureCanvas.current.getTrimmedCanvas().toDataURL('image/png');
 
-      // 4. Enregistrement dans Supabase
-      const { error } = await supabase.from('contracts').insert([{
+      // 4. Envoi des données à Supabase
+      // On s'assure que shift_start ET shift_end sont bien formatés
+      const payload = {
         employee_id: employee.id,
         contract_date: contract.start_date,
         job_title: contract.job_title,
         hourly_rate_brut: parseFloat(contract.hourly_rate_brut.replace(',', '.')),
-        shift_start: `${contract.start_date} ${contract.start_time}:00`, // Correction : Ajouté
-        shift_end: contract.shift_end,
+        shift_start: `${contract.start_date} ${contract.start_time}:00`,
+        shift_end: `${contract.end_date} ${contract.end_time}:00`,
         signature_image: signatureImage,
-        signed_at: localISOTime, // Correction : Heure locale
-        ip_address: userIp      // Correction : Ajouté
-      }]);
+        signed_at: localISOTime,
+        ip_address: userIp
+      };
+
+      const { data, error } = await supabase
+        .from('contracts')
+        .insert([payload])
+        .select();
 
       if (error) {
-        alert("Erreur lors de l'enregistrement : " + error.message);
+        console.error("Erreur Supabase détaillée:", error);
+        alert(`Erreur lors de l'enregistrement : ${error.message}`);
         setIsSubmitting(false);
       } else {
-        alert("Contrat officialisé avec succès !");
+        alert("Contrat enregistré avec succès !");
         onConfirm();
       }
     } catch (err) {
-      alert("Erreur système : " + err.message);
+      console.error("Erreur système:", err);
+      alert("Une erreur critique est survenue.");
       setIsSubmitting(false);
     }
   };
 
   return (
     <div style={containerStyle}>
-      <h2 style={headerStyle}>LECTURE ET SIGNATURE</h2>
+      <h2 style={headerStyle}>LECTURE ET SIGNATURE DU CONTRAT</h2>
       
       <div style={scrollBox}>
         <section style={sectionStyle}>
