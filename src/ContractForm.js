@@ -9,10 +9,9 @@ const ContractForm = ({ employee, onComplete }) => {
     work_date: new Date().toISOString().split('T')[0],
     start_time: '18:00',
     end_time: '23:00',
-    hourly_rate: 0, // Sera remplacé par la valeur de la DB
+    hourly_rate: "0",
   });
 
-  // Chargement du SMIC depuis Supabase au démarrage
   useEffect(() => {
     const fetchSmic = async () => {
       const { data } = await supabase
@@ -22,19 +21,37 @@ const ContractForm = ({ employee, onComplete }) => {
         .single();
       
       if (data) {
-        setContractData(prev => ({ ...prev, hourly_rate: data.value }));
+        // On remplace le point par une virgule pour l'affichage initial
+        setContractData(prev => ({ ...prev, hourly_rate: data.value.toString().replace('.', ',') }));
       }
     };
     fetchSmic();
   }, []);
 
   const calculateTotal = () => {
+    // On convertit la virgule en point pour le calcul mathématique
+    const rate = parseFloat(contractData.hourly_rate.replace(',', '.'));
+    if (isNaN(rate)) return "0.00";
+
     const start = new Date(`2000-01-01T${contractData.start_time}`);
     const end = new Date(`2000-01-01T${contractData.end_time}`);
     if (end < start) end.setDate(end.getDate() + 1);
     
     const hours = (end - start) / (1000 * 60 * 60);
-    return (hours * contractData.hourly_rate).toFixed(2);
+    return (hours * rate).toFixed(2);
+  };
+
+  const handleKeyDown = (e) => {
+    // Si l'utilisateur appuie sur le point (clavier numérique ou normal)
+    if (e.key === '.' || e.key === ',') {
+      e.preventDefault(); // On empêche le comportement par défaut (l'effacement)
+      
+      const currentVal = contractData.hourly_rate;
+      // On n'ajoute une virgule que s'il n'y en a pas déjà une
+      if (!currentVal.includes(',')) {
+        setContractData({ ...contractData, hourly_rate: currentVal + ',' });
+      }
+    }
   };
 
   const handleSubmit = async () => {
@@ -44,13 +61,14 @@ const ContractForm = ({ employee, onComplete }) => {
     }
     setLoading(true);
     const signatureImage = sigCanvas.current.getTrimmedCanvas().toDataURL('image/png');
+    const finalRate = parseFloat(contractData.hourly_rate.replace(',', '.'));
 
     const { error } = await supabase.from('contracts').insert([{
       employee_id: employee.id,
       work_date: contractData.work_date,
       start_time: contractData.start_time,
       end_time: contractData.end_time,
-      hourly_rate: contractData.hourly_rate,
+      hourly_rate: finalRate,
       total_amount: calculateTotal(),
       signature_image: signatureImage,
       status: 'signed'
@@ -84,7 +102,15 @@ const ContractForm = ({ employee, onComplete }) => {
         </div>
 
         <label style={labelStyle}>Taux horaire brut (€)</label>
-        <input type="number" step="0.01" style={inputStyle} value={contractData.hourly_rate} onChange={(e) => setContractData({...contractData, hourly_rate: parseFloat(e.target.value)})} />
+        <input 
+          type="text" 
+          inputMode="decimal"
+          style={inputStyle} 
+          placeholder="Ex: 12,50"
+          value={contractData.hourly_rate} 
+          onKeyDown={handleKeyDown} // On intercepte la touche ici
+          onChange={(e) => setContractData({...contractData, hourly_rate: e.target.value.replace('.', ',')})} 
+        />
 
         <div style={{ marginTop: '10px', fontSize: '1.2em', fontWeight: 'bold', color: '#2ecc71', textAlign: 'right' }}>
           Total Brut : {calculateTotal()} €
