@@ -1,109 +1,113 @@
-import React, { useRef, useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import SignatureCanvas from 'react-signature-canvas';
 import { supabase } from './supabaseClient';
 
-/**
- * Composant pour définir les conditions du contrat et signer.
- */
-const ContractForm = ({ employee, onBack }) => {
-  const sigPad = useRef({});
+const ContractForm = ({ employee, onComplete }) => {
+  const sigCanvas = useRef({});
   const [loading, setLoading] = useState(false);
-  const [contractDetails, setContractDetails] = useState({
-    job_title: 'Extra Restauration',
-    hourly_rate_brut: '',
-    shift_start: '',
-    shift_end: ''
+  const [contractData, setContractData] = useState({
+    work_date: new Date().toISOString().split('T')[0],
+    start_time: '18:00',
+    end_time: '23:00',
+    hourly_rate: 0, // Sera remplacé par la valeur de la DB
   });
 
-  // Fonction pour tout enregistrer dans Supabase
-  const saveContract = async () => {
-    if (sigPad.current.isEmpty()) {
-      return alert("L'employé doit signer avant de valider !");
-    }
-
-    setLoading(true);
-
-    // 1. On récupère l'image de la signature (tracé au doigt)
-    const signatureImage = sigPad.current.getTrimmedCanvas().toDataURL('image/png');
-
-    // 2. On prépare les données du contrat
-    const contractData = {
-      employee_id: employee.id,
-      job_title: contractDetails.job_title,
-      hourly_rate_brut: parseFloat(contractDetails.hourly_rate_brut),
-      shift_start: contractDetails.shift_start,
-      shift_end: contractDetails.shift_end,
-      signature_image: signatureImage,
-      signed_at: new Date().toISOString(), // Horodatage précis
-      ip_address: "Client-side capture" // Sera affiné avec l'hébergement
+  // Chargement du SMIC depuis Supabase au démarrage
+  useEffect(() => {
+    const fetchSmic = async () => {
+      const { data } = await supabase
+        .from('settings')
+        .select('value')
+        .eq('key', 'smic_horaire')
+        .single();
+      
+      if (data) {
+        setContractData(prev => ({ ...prev, hourly_rate: data.value }));
+      }
     };
+    fetchSmic();
+  }, []);
 
-    // 3. Envoi vers la table 'contracts' de Supabase
-    const { error } = await supabase.from('contracts').insert([contractData]);
+  const calculateTotal = () => {
+    const start = new Date(`2000-01-01T${contractData.start_time}`);
+    const end = new Date(`2000-01-01T${contractData.end_time}`);
+    if (end < start) end.setDate(end.getDate() + 1);
+    
+    const hours = (end - start) / (1000 * 60 * 60);
+    return (hours * contractData.hourly_rate).toFixed(2);
+  };
 
-    if (error) {
-      alert("Erreur lors de la signature : " + error.message);
-    } else {
-      alert("Contrat signé et enregistré avec succès !");
-      // Ici, on pourrait ajouter l'étape de génération du PDF
+  const handleSubmit = async () => {
+    if (sigCanvas.current.isEmpty()) {
+      alert("Signature obligatoire.");
+      return;
+    }
+    setLoading(true);
+    const signatureImage = sigCanvas.current.getTrimmedCanvas().toDataURL('image/png');
+
+    const { error } = await supabase.from('contracts').insert([{
+      employee_id: employee.id,
+      work_date: contractData.work_date,
+      start_time: contractData.start_time,
+      end_time: contractData.end_time,
+      hourly_rate: contractData.hourly_rate,
+      total_amount: calculateTotal(),
+      signature_image: signatureImage,
+      status: 'signed'
+    }]);
+
+    if (!error) {
+      alert("Contrat enregistré !");
+      onComplete();
     }
     setLoading(false);
   };
 
   return (
-    <div style={{ maxWidth: '500px', margin: 'auto', padding: '20px', border: '1px solid #28a745', borderRadius: '8px' }}>
-      <button onClick={onBack} style={{ marginBottom: '10px' }}>← Retour</button>
-      
-      <h3>Contrat pour {employee.first_name} {employee.last_name}</h3>
-      <p style={{ fontSize: '0.9em', color: '#666' }}>Sécu : {employee.ssn}</p>
+    <div style={{ maxWidth: '500px', margin: 'auto', padding: '20px', backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #ccc' }}>
+      <h2 style={{ textAlign: 'center' }}>Contrat de Travail</h2>
+      <p style={{textAlign: 'center', color: '#666'}}>Employé : <strong>{employee.first_name} {employee.last_name}</strong></p>
 
-      <div style={{ marginTop: '20px' }}>
-        <label>Taux horaire Brut (€)</label>
-        <input 
-          type="number" 
-          style={inputStyle} 
-          onChange={(e) => setContractDetails({...contractDetails, hourly_rate_brut: e.target.value})}
-        />
-        
-        <label>Début du shift</label>
-        <input 
-          type="datetime-local" 
-          style={inputStyle} 
-          onChange={(e) => setContractDetails({...contractDetails, shift_start: e.target.value})}
-        />
+      <div style={{ backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
+        <label style={labelStyle}>Date du travail</label>
+        <input type="date" style={inputStyle} value={contractData.work_date} onChange={(e) => setContractData({...contractData, work_date: e.target.value})} />
 
-        <label>Fin du shift (estimée)</label>
-        <input 
-          type="datetime-local" 
-          style={inputStyle} 
-          onChange={(e) => setContractDetails({...contractDetails, shift_end: e.target.value})}
-        />
-      </div>
-
-      <div style={{ marginTop: '20px' }}>
-        <label>Signature de l'employé (au doigt) :</label>
-        <div style={{ border: '1px solid #000', background: '#f9f9f9', marginTop: '5px' }}>
-          <SignatureCanvas 
-            ref={sigPad}
-            penColor='black'
-            canvasProps={{ width: 460, height: 200, className: 'sigCanvas' }} 
-          />
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Heure de début</label>
+            <input type="time" style={inputStyle} value={contractData.start_time} onChange={(e) => setContractData({...contractData, start_time: e.target.value})} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Heure de fin</label>
+            <input type="time" style={inputStyle} value={contractData.end_time} onChange={(e) => setContractData({...contractData, end_time: e.target.value})} />
+          </div>
         </div>
-        <button onClick={() => sigPad.current.clear()} style={{ marginTop: '5px', fontSize: '0.8em' }}>Effacer la signature</button>
+
+        <label style={labelStyle}>Taux horaire brut (€)</label>
+        <input type="number" step="0.01" style={inputStyle} value={contractData.hourly_rate} onChange={(e) => setContractData({...contractData, hourly_rate: parseFloat(e.target.value)})} />
+
+        <div style={{ marginTop: '10px', fontSize: '1.2em', fontWeight: 'bold', color: '#2ecc71', textAlign: 'right' }}>
+          Total Brut : {calculateTotal()} €
+        </div>
       </div>
 
-      <button 
-        onClick={saveContract} 
-        disabled={loading}
-        style={{ ...buttonStyle, marginTop: '30px', backgroundColor: '#28a745' }}
-      >
-        {loading ? "Enregistrement..." : "Signer le contrat en direct"}
-      </button>
+      <label style={labelStyle}>Signature de l'employé</label>
+      <div style={{ border: '1px solid #ddd', borderRadius: '4px', marginBottom: '10px', backgroundColor: '#fff' }}>
+        <SignatureCanvas ref={sigCanvas} penColor='black' canvasProps={{ width: 450, height: 180, className: 'sigCanvas' }} />
+      </div>
+      
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button onClick={() => sigCanvas.current.clear()} style={{ ...buttonStyle, backgroundColor: '#e74c3c', flex: 1 }}>Effacer</button>
+        <button onClick={handleSubmit} disabled={loading} style={{ ...buttonStyle, flex: 2 }}>
+          {loading ? "Chargement..." : "Signer le contrat"}
+        </button>
+      </div>
     </div>
   );
 };
 
-const inputStyle = { display: 'block', width: '100%', marginBottom: '15px', padding: '10px', borderRadius: '4px', border: '1px solid #ddd' };
-const buttonStyle = { width: '100%', padding: '15px', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
+const inputStyle = { display: 'block', width: '100%', marginBottom: '15px', padding: '10px', borderRadius: '4px', border: '1px solid #ddd', boxSizing: 'border-box' };
+const labelStyle = { display: 'block', fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' };
+const buttonStyle = { padding: '15px', color: 'white', backgroundColor: '#27ae60', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
 
 export default ContractForm;
