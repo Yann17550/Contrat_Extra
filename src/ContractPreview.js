@@ -10,41 +10,63 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
 
   const formatDate = (dateStr) => new Date(dateStr).toLocaleDateString('fr-FR');
 
+  // Fonction pour récupérer l'IP et envoyer les données
   const handleFinalSubmit = async () => {
-    // 1. Validation de sécurité : le paraphe est obligatoire
     if (!isParaphed) {
-      alert("Veuillez apposer votre paraphe (initiales) dans la zone bleue avant de signer.");
+      alert("Veuillez apposer votre paraphe (initiales) dans la zone bleue.");
       return;
     }
 
-    // 2. Validation de sécurité : la signature est obligatoire
     if (signatureCanvas.current.isEmpty()) {
-      alert("La signature finale est obligatoire pour valider le contrat.");
+      alert("La signature finale est obligatoire.");
       return;
     }
 
     setIsSubmitting(true);
-    
-    // Capture de la signature sous forme d'image Base64
-    const signatureImage = signatureCanvas.current.getTrimmedCanvas().toDataURL('image/png');
 
-    // 3. Enregistrement dans Supabase
-    const { error } = await supabase.from('contracts').insert([{
-      employee_id: employee.id,
-      contract_date: contract.start_date,
-      job_title: contract.job_title,
-      hourly_rate_brut: parseFloat(contract.hourly_rate_brut.replace(',', '.')),
-      shift_end: contract.shift_end,
-      signature_image: signatureImage,
-      signed_at: new Date().toISOString()
-    }]);
+    try {
+      // 1. Récupération de l'adresse IP
+      let userIp = "0.0.0.0";
+      try {
+        const ipRes = await fetch('https://api.ipify.org?format=json');
+        const ipData = await ipRes.json();
+        userIp = ipData.ip;
+      } catch (e) {
+        console.error("Erreur récupération IP", e);
+      }
 
-    if (error) {
-      alert("Erreur lors de l'enregistrement : " + error.message);
+      // 2. Préparation de l'heure locale (Fuseau horaire de l'appareil)
+      // On crée une date qui simule l'heure locale pour l'enregistrement
+      const now = new Date();
+      const offset = now.getTimezoneOffset() * 60000;
+      const localISOTime = (new Date(now - offset)).toISOString().slice(0, -1);
+
+      // 3. Capture de la signature
+      const signatureImage = signatureCanvas.current.getTrimmedCanvas().toDataURL('image/png');
+
+      // 4. Enregistrement dans Supabase
+      const { error } = await supabase.from('contracts').insert([{
+        employee_id: employee.id,
+        contract_date: contract.start_date,
+        job_title: contract.job_title,
+        hourly_rate_brut: parseFloat(contract.hourly_rate_brut.replace(',', '.')),
+        shift_start: `${contract.start_date} ${contract.start_time}:00`, // Correction : Ajouté
+        shift_end: contract.shift_end,
+        signature_image: signatureImage,
+        signed_at: localISOTime, // Correction : Heure locale
+        ip_address: userIp      // Correction : Ajouté
+      }]);
+
+      if (error) {
+        alert("Erreur lors de l'enregistrement : " + error.message);
+        setIsSubmitting(false);
+      } else {
+        alert("Contrat officialisé avec succès !");
+        onConfirm();
+      }
+    } catch (err) {
+      alert("Erreur système : " + err.message);
       setIsSubmitting(false);
-    } else {
-      alert("Contrat officialisé avec succès dans la base de données !");
-      onConfirm();
     }
   };
 
@@ -69,7 +91,6 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
           Fin : {formatDate(contract.end_date)} à {contract.end_time}.</p>
         </section>
 
-        {/* ZONE DE PARAPHE (BLEUE) */}
         <div style={parapheContainer}>
           <p style={{ fontSize: '12px', marginBottom: '5px', fontWeight: 'bold' }}>Paraphe (Initiales) :</p>
           <div style={canvasBorder}>
@@ -89,7 +110,6 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
           Total brut estimé : {contract.total_amount} €.</p>
         </section>
 
-        {/* ZONE DE SIGNATURE FINALE (NOIRE) */}
         <div style={signatureContainer}>
           <p style={{ fontWeight: 'bold', marginBottom: '10px' }}>Signature finale du salarié :</p>
           <div style={canvasBorder}>
@@ -117,7 +137,6 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
   );
 };
 
-// --- STYLES ---
 const containerStyle = { maxWidth: '600px', margin: 'auto', padding: '20px', backgroundColor: '#fff', border: '1px solid #ccc', borderRadius: '8px' };
 const headerStyle = { textAlign: 'center', fontSize: '18px', textDecoration: 'underline', marginBottom: '15px' };
 const scrollBox = { height: '450px', overflowY: 'scroll', border: '1px solid #eee', padding: '15px', backgroundColor: '#f9f9f9' };
