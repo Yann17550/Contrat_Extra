@@ -2,9 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import SignatureCanvas from 'react-signature-canvas';
 import { supabase } from './supabaseClient';
 
-const ContractForm = ({ employee, onComplete }) => {
+const ContractForm = ({ employee, onPreview }) => {
   const sigCanvas = useRef({});
-  const [loading, setLoading] = useState(false);
   const [contractData, setContractData] = useState({
     start_date: new Date().toISOString().split('T')[0],
     end_date: new Date().toISOString().split('T')[0],
@@ -23,7 +22,7 @@ const ContractForm = ({ employee, onComplete }) => {
     fetchSmic();
   }, []);
 
-  // Calcul du montant brut pour affichage
+  // Calcul du montant brut pour affichage et export
   const calculateTotal = () => {
     const rate = parseFloat(contractData.hourly_rate_brut.replace(',', '.'));
     if (isNaN(rate)) return "0.00";
@@ -43,37 +42,27 @@ const ContractForm = ({ employee, onComplete }) => {
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = (e) => {
     if (sigCanvas.current.isEmpty()) {
       alert("La signature est obligatoire.");
       return;
     }
-    setLoading(true);
     
+    // On génère l'image de la signature
     const signatureImage = sigCanvas.current.getTrimmedCanvas().toDataURL('image/png');
-    const finalRate = parseFloat(contractData.hourly_rate_brut.replace(',', '.'));
     
-    // On prépare la date de fin au format complet pour shift_end
-    const shiftEndFull = `${contractData.end_date} ${contractData.end_time}:00`;
-
-    const { error } = await supabase.from('contracts').insert([{
-      employee_id: employee.id,
-      contract_date: contractData.start_date, // Date du contrat
-      job_title: contractData.job_title,
-      hourly_rate_brut: finalRate,
-      shift_end: shiftEndFull, // Date et heure de fin
+    // On prépare l'objet complet pour l'aperçu
+    const finalContract = {
+      ...contractData,
+      total_amount: calculateTotal(),
       signature_image: signatureImage,
-      signed_at: new Date().toISOString(),
-      // ip_address est souvent géré automatiquement par Supabase ou laissé vide ici
-    }]);
+      // On garde le format pour shift_end
+      shift_end: `${contractData.end_date} ${contractData.end_time}:00`,
+      signed_at: new Date().toISOString()
+    };
 
-    if (error) {
-      alert("Erreur Supabase : " + error.message);
-    } else {
-      alert("Contrat signé avec succès !");
-      onComplete();
-    }
-    setLoading(false);
+    // On passe les données au composant parent (App.js) pour affichage du contrat type
+    onPreview(finalContract);
   };
 
   return (
@@ -113,7 +102,7 @@ const ContractForm = ({ employee, onComplete }) => {
       
       <div style={{ display: 'flex', gap: '10px' }}>
         <button onClick={() => sigCanvas.current.clear()} style={{ ...buttonStyle, backgroundColor: '#e74c3c', flex: 1 }}>Effacer</button>
-        <button onClick={handleSubmit} disabled={loading} style={{ ...buttonStyle, flex: 2 }}>{loading ? "Enregistrement..." : "Signer le contrat"}</button>
+        <button onClick={handleSubmit} style={{ ...buttonStyle, flex: 2 }}>Voir l'aperçu du contrat</button>
       </div>
     </div>
   );
