@@ -1,43 +1,51 @@
 import React, { useState } from 'react';
 import EmployeeForm from './EmployeeForm';
 import ContractForm from './ContractForm';
+import ContractPreview from './ContractPreview'; // Nouveau
 
-/**
- * Application principale : Gère la navigation entre l'étape 1 (Employé)
- * et l'étape 2 (Contrat & Signature).
- */
 function App() {
-  const [step, setStep] = useState(1); // 1 = Infos employé, 2 = Signature contrat
+  const [step, setStep] = useState(1);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [tempContract, setTempContract] = useState(null);
+
+  const handleEmployeeReady = (employee) => {
+    setSelectedEmployee(employee);
+    setStep(2);
+  };
+
+  const handleContractSigned = (contractData) => {
+    setTempContract(contractData);
+    setStep(3); // On passe à l'aperçu
+  };
+
+  const finalizeProcess = () => {
+    alert("Processus terminé ! Le contrat a été archivé.");
+    setStep(1);
+    setSelectedEmployee(null);
+    setTempContract(null);
+  };
 
   return (
-    <div style={{ padding: '10px', maxWidth: '600px', margin: 'auto', fontFamily: 'Arial, sans-serif' }}>
-      <header style={{ textAlign: 'center', marginBottom: '20px' }}>
-        <h1 style={{ color: '#333' }}>✍️ Signature Contrat Extra</h1>
-        <p>Restauration - Embauche Immédiate</p>
-      </header>
-
-      {/* ÉTAPE 1 : Identification de l'extra */}
-      {step === 1 && (
-        <EmployeeForm 
-          onEmployeeSelect={(emp) => {
-            setSelectedEmployee(emp);
-            setStep(2);
-          }} 
-        />
-      )}
-
-      {/* ÉTAPE 2 : Détails du shift et signature au doigt */}
+    <div className="App" style={{ padding: '20px', backgroundColor: '#f0f2f5', minHeight: '100vh' }}>
+      <h1 style={{ textAlign: 'center', color: '#2c3e50' }}>Gestion des Extras</h1>
+      
+      {step === 1 && <EmployeeForm onEmployeeSelect={handleEmployeeReady} />}
+      
       {step === 2 && (
         <ContractForm 
           employee={selectedEmployee} 
-          onBack={() => setStep(1)} 
+          onPreview={handleContractSigned} // On change onComplete par onPreview
         />
       )}
 
-      <footer style={{ marginTop: '40px', textAlign: 'center', fontSize: '0.8em', color: '#999' }}>
-        Système de signature numérique certifié - IP & Horodatage activés
-      </footer>
+      {step === 3 && (
+        <ContractPreview 
+          employee={selectedEmployee} 
+          contract={tempContract} 
+          onConfirm={finalizeProcess} 
+          onBack={() => setStep(2)} 
+        />
+      )}
     </div>
   );
 }
