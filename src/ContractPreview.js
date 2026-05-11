@@ -1,181 +1,161 @@
-import React, { useState, useRef } from 'react';
-import SignatureCanvas from 'react-signature-canvas';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 
-const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
-  const parapheCanvas = useRef({});
-  const signatureCanvas = useRef({});
-  const [isParaphed, setIsParaphed] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+const ContractForm = ({ employee, onPreview }) => {
+  const [isNet, setIsNet] = useState(false); // État pour le switch Brut/Net
+  const [contractData, setContractData] = useState({
+    start_date: new Date().toISOString().split('T')[0],
+    end_date: new Date().toISOString().split('T')[0],
+    start_time: '18:00',
+    end_time: '23:00',
+    hourly_rate: "0", 
+    job_title: "Extra Restauration"
+  });
 
-  const formatDate = (dateStr) => {
-    if (!dateStr) return "";
-    return new Date(dateStr).toLocaleDateString('fr-FR');
+  useEffect(() => {
+    const fetchSmic = async () => {
+      try {
+        const { data } = await supabase.from('settings').select('value').eq('key', 'smic_horaire').single();
+        if (data) {
+          setContractData(prev => ({ ...prev, hourly_rate: data.value.toString().replace('.', ',') }));
+        }
+      } catch (err) {
+        console.error("Erreur lors de la récupération du SMIC");
+      }
+    };
+    fetchSmic();
+  }, []);
+
+  // Fonction de calcul du taux brut final
+  const getFinalBrutRate = () => {
+    const value = parseFloat(contractData.hourly_rate.replace(',', '.'));
+    if (isNaN(value)) return 0;
+    // Si l'utilisateur a sélectionné NET, on convertit en BRUT (base 20% charges)
+    return isNet ? (value / 0.80) : value;
   };
 
-  const handleFinalSubmit = async () => {
-    if (!isParaphed) {
-      alert("Veuillez apposer votre paraphe avant de signer.");
-      return;
-    }
-    if (signatureCanvas.current.isEmpty()) {
-      alert("La signature est obligatoire.");
-      return;
-    }
+  const calculateTotal = () => {
+    const rate = getFinalBrutRate();
+    const start = new Date(`${contractData.start_date}T${contractData.start_time}`);
+    const end = new Date(`${contractData.end_date}T${contractData.end_time}`);
+    const diffMs = end - start;
+    if (diffMs <= 0) return "0.00";
+    return ((diffMs / (1000 * 60 * 60)) * rate).toFixed(2);
+  };
 
-    setIsSubmitting(true);
-
-    try {
-      // 1. Récupération de l'IP
-      let userIp = "0.0.0.0";
-      try {
-        const ipRes = await fetch('https://api.ipify.org?format=json');
-        const ipData = await ipRes.json();
-        userIp = ipData.ip;
-      } catch (e) { console.warn("IP non dispo"); }
-
-      // 2. Préparation des dates et images
-      const now = new Date();
-      const offset = now.getTimezoneOffset() * 60000;
-      const signedAtLocal = (new Date(now - offset)).toISOString().replace('T', ' ').split('.')[0];
-      const shiftStartFull = `${contract.start_date} ${contract.start_time}:00`;
-      const shiftEndFull = `${contract.end_date} ${contract.end_time}:00`;
-      
-      const signatureImage = signatureCanvas.current.getTrimmedCanvas().toDataURL('image/png');
-      const parapheImage = parapheCanvas.current.getTrimmedCanvas().toDataURL('image/png');
-
-      // 3. Enregistrement Supabase
-      const { error: dbError } = await supabase.from('contracts').insert([{
-        employee_id: employee.id,
-        contract_date: contract.start_date,
-        job_title: contract.job_title,
-        hourly_rate_brut: parseFloat(contract.hourly_rate_brut.replace(',', '.')),
-        shift_start: shiftStartFull,
-        shift_end: shiftEndFull,
-        signature_image: signatureImage,
-        signed_at: signedAtLocal,
-        ip_address: userIp
-      }]);
-
-      if (dbError) throw dbError;
-
-      // 4. Génération du PDF en mémoire (via le script chargé dans index.html)
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF();
-      
-      doc.setFontSize(16);
-      doc.text("CONTRAT DE TRAVAIL (EXTRA)", 105, 20, { align: 'center' });
-      doc.setFontSize(10);
-      doc.text(`Employé : ${employee.first_name} ${employee.last_name}`, 20, 40);
-      doc.text(`SSN : ${employee.ssn}`, 20, 45);
-      doc.text(`Adresse : ${employee.address}`, 20, 50);
-      doc.text(`Poste : ${contract.job_title}`, 20, 60);
-      doc.text(`Début : ${shiftStartFull}`, 20, 65);
-      doc.text(`Fin : ${shiftEndFull}`, 20, 70);
-      doc.text(`Rémunération : ${contract.hourly_rate_brut} Euros/h brut`, 20, 80);
-      doc.text(`Total estimé : ${contract.total_amount} Euros`, 20, 85);
-      
-      doc.text("Paraphe :", 150, 90);
-      doc.addImage(parapheImage, 'PNG', 150, 95, 20, 10);
-      
-      doc.text("Signature :", 20, 110);
-      doc.addImage(signatureImage, 'PNG', 20, 115, 50, 25);
-      doc.text(`Signé le : ${signedAtLocal} (IP: ${userIp})`, 20, 150);
-
-      // Conversion du PDF en Base64 pour l'envoi
-      const pdfBase64 = doc.output('datauristring').split(',')[1];
-
-      // 5. Appel de la Edge Function pour l'envoi d'email
-      const { data: emailData, error: emailError } = await supabase.functions.invoke('send-contract-email', {
-        body: {
-          employeeEmail: employee.email,
-          myEmail: "oleron.pizza@gmail.com", // Ton email de gestion
-          employeeName: `${employee.first_name} ${employee.last_name}`,
-          pdfBase64: pdfBase64,
-          fileName: `Contrat_${employee.last_name}_${contract.start_date}.pdf`
-        }
-      });
-
-      if (emailError) {
-        console.error("Erreur Email:", emailError);
-        alert("Contrat enregistré, mais l'envoi de l'email a échoué.");
-      } else {
-        alert("Contrat validé, enregistré et envoyé par email !");
+  const handleKeyDown = (e) => {
+    if (e.key === '.' || e.key === ',') {
+      e.preventDefault();
+      if (!contractData.hourly_rate.includes(',')) {
+        setContractData({ ...contractData, hourly_rate: contractData.hourly_rate + ',' });
       }
-
-      onConfirm();
-
-    } catch (err) {
-      console.error(err);
-      alert("Erreur critique : " + err.message);
-      setIsSubmitting(false);
     }
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+
+    // 1. VERIFICATION : L'heure de début ne peut pas être inférieure à maintenant
+    const now = new Date();
+    const selectedStart = new Date(`${contractData.start_date}T${contractData.start_time}`);
+
+    if (selectedStart < now) {
+      alert("Erreur : La mission ne peut pas commencer dans le passé. Veuillez corriger l'heure ou la date de début.");
+      return;
+    }
+
+    const brutRate = getFinalBrutRate();
+    const total = calculateTotal();
+
+    if (parseFloat(total) <= 0) {
+      alert("Veuillez vérifier les horaires : la fin doit être après le début.");
+      return;
+    }
+
+    // 2. ENVOI : On envoie le taux BRUT au composant suivant (le PDF affichera donc le brut)
+    onPreview({
+      ...contractData,
+      hourly_rate_brut: brutRate.toFixed(2).replace('.', ','),
+      total_amount: total,
+      shift_end: `${contractData.end_date} ${contractData.end_time}:00`
+    });
   };
 
   return (
     <div style={containerStyle}>
-      <h2 style={headerStyle}>LECTURE ET SIGNATURE</h2>
-      <div style={scrollBox}>
-        <section style={sectionStyle}>
-          <p><strong>EMPLOYÉ :</strong> {employee.last_name} {employee.first_name}</p>
-          <p>Né(e) le {formatDate(employee.birth_date)} à {employee.birth_place}</p>
-          <p>Demeurant : {employee.address}</p>
-          <p>SSN : {employee.ssn}</p>
-        </section>
+      <h2 style={{ textAlign: 'center', marginBottom: '10px' }}>Conditions de la Mission</h2>
+      <p style={{ textAlign: 'center', marginBottom: '20px' }}>Salarié : <strong>{employee.first_name} {employee.last_name}</strong></p>
 
-        <section style={sectionStyle}>
-          <p><strong>MISSION :</strong> {contract.job_title}</p>
-          <p>Du {formatDate(contract.start_date)} à {contract.start_time}</p>
-          <p>Au {formatDate(contract.end_date)} à {contract.end_time}</p>
-          <p>Taux : {contract.hourly_rate_brut} €/h brut</p>
-        </section>
+      <div style={formCard}>
+        <label style={labelStyle}>Poste occupé</label>
+        <input 
+          type="text" 
+          style={inputStyle} 
+          value={contractData.job_title} 
+          onChange={(e) => setContractData({...contractData, job_title: e.target.value})} 
+        />
 
-        <div style={parapheContainer}>
-          <p style={{ fontSize: '12px', fontWeight: 'bold' }}>Paraphe (Initiales) :</p>
-          <div style={canvasBorder}>
-            <SignatureCanvas 
-              ref={parapheCanvas} 
-              penColor='blue' 
-              canvasProps={{ width: 150, height: 60, className: 'parapheCanvas' }} 
-              onEnd={() => setIsParaphed(true)}
-            />
+        <div style={rowStyle}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Début (Date/Heure)</label>
+            <input type="date" style={inputSmall} value={contractData.start_date} onChange={(e) => setContractData({...contractData, start_date: e.target.value})} />
+            <input type="time" style={inputSmall} value={contractData.start_time} onChange={(e) => setContractData({...contractData, start_time: e.target.value})} />
           </div>
-          <button onClick={() => { parapheCanvas.current.clear(); setIsParaphed(false); }} style={miniBtn}>Effacer</button>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Fin (Date/Heure)</label>
+            <input type="date" style={inputSmall} value={contractData.end_date} onChange={(e) => setContractData({...contractData, end_date: e.target.value})} />
+            <input type="time" style={inputSmall} value={contractData.end_time} onChange={(e) => setContractData({...contractData, end_time: e.target.value})} />
+          </div>
         </div>
 
-        <div style={signatureContainer}>
-          <p style={{ fontWeight: 'bold' }}>Signature finale :</p>
-          <div style={canvasBorder}>
-            <SignatureCanvas 
-              ref={signatureCanvas} 
-              penColor='black' 
-              canvasProps={{ width: 300, height: 150, className: 'signatureCanvas' }} 
-            />
-          </div>
-          <button onClick={() => signatureCanvas.current.clear()} style={miniBtn}>Effacer</button>
+        <label style={labelStyle}>Rémunération (€)</label>
+        {/* SWITCH BRUT / NET */}
+        <div style={switchContainer}>
+          <button 
+            type="button" 
+            onClick={() => setIsNet(false)} 
+            style={!isNet ? switchBtnActive : switchBtnInactive}
+          >BRUT</button>
+          <button 
+            type="button" 
+            onClick={() => setIsNet(true)} 
+            style={isNet ? switchBtnActive : switchBtnInactive}
+          >NET</button>
+        </div>
+
+        <input 
+          type="text" 
+          inputMode="decimal" 
+          style={inputStyle} 
+          value={contractData.hourly_rate} 
+          onKeyDown={handleKeyDown} 
+          onChange={(e) => setContractData({...contractData, hourly_rate: e.target.value.replace('.', ',')})} 
+        />
+
+        <div style={totalBox}>
+          Total Brut Estimé : {calculateTotal()} €
         </div>
       </div>
 
-      <div style={footerActions}>
-        <button onClick={onBack} disabled={isSubmitting} style={backBtn}>Retour</button>
-        <button onClick={handleFinalSubmit} disabled={!isParaphed || isSubmitting} style={submitBtn}>
-          {isSubmitting ? "Traitement..." : "Officialiser et Envoyer"}
-        </button>
-      </div>
+      <button onClick={handleSubmit} style={buttonStyle}>
+        Générer le contrat pour lecture
+      </button>
     </div>
   );
 };
 
-const containerStyle = { maxWidth: '600px', margin: 'auto', padding: '20px', backgroundColor: '#fff', border: '1px solid #ccc', borderRadius: '8px' };
-const headerStyle = { textAlign: 'center', fontSize: '18px', textDecoration: 'underline', marginBottom: '15px' };
-const scrollBox = { height: '450px', overflowY: 'scroll', border: '1px solid #eee', padding: '15px', backgroundColor: '#f9f9f9' };
-const sectionStyle = { marginBottom: '20px', fontSize: '14px', lineHeight: '1.5' };
-const parapheContainer = { textAlign: 'right', marginBottom: '20px', padding: '10px', border: '1px dashed #3498db', backgroundColor: '#ebf5fb' };
-const signatureContainer = { marginTop: '30px', padding: '15px', border: '1px solid #000', backgroundColor: '#fff' };
-const canvasBorder = { border: '1px solid #ddd', display: 'inline-block', backgroundColor: '#fff' };
-const miniBtn = { fontSize: '10px', display: 'block', marginLeft: 'auto', marginTop: '5px', cursor: 'pointer', background: 'none', border: 'none', textDecoration: 'underline' };
-const footerActions = { display: 'flex', gap: '10px', marginTop: '20px' };
-const submitBtn = { flex: 2, padding: '15px', backgroundColor: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
-const backBtn = { flex: 1, padding: '15px', backgroundColor: '#95a5a6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' };
+// --- STYLES ---
+const containerStyle = { maxWidth: '500px', margin: 'auto', padding: '20px', backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #ccc' };
+const formCard = { backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '5px', marginBottom: '20px' };
+const inputStyle = { display: 'block', width: '100%', marginBottom: '15px', padding: '12px', borderRadius: '4px', border: '1px solid #ddd', boxSizing: 'border-box', fontSize: '16px' };
+const inputSmall = { display: 'block', width: '100%', marginBottom: '5px', padding: '10px', borderRadius: '4px', border: '1px solid #ddd', boxSizing: 'border-box', fontSize: '14px' };
+const labelStyle = { display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '8px', color: '#34495e' };
+const rowStyle = { display: 'flex', gap: '10px', marginBottom: '10px' };
+const totalBox = { marginTop: '10px', fontSize: '1.2em', fontWeight: 'bold', color: '#27ae60', textAlign: 'right' };
+const buttonStyle = { width: '100%', padding: '16px', color: 'white', backgroundColor: '#3498db', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' };
 
-export default ContractPreview;
+const switchContainer = { display: 'flex', marginBottom: '10px', gap: '2px', backgroundColor: '#eee', padding: '2px', borderRadius: '4px' };
+const switchBtnActive = { flex: 1, padding: '8px', border: 'none', backgroundColor: '#3498db', color: 'white', borderRadius: '3px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' };
+const switchBtnInactive = { flex: 1, padding: '8px', border: 'none', backgroundColor: 'transparent', color: '#7f8c8d', cursor: 'pointer', fontSize: '12px' };
+
+export default ContractForm;
