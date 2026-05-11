@@ -14,27 +14,39 @@ const EmployeeForm = ({ onEmployeeSelect }) => {
   });
   const [existingId, setExistingId] = useState(null);
 
-  const stripAccents = (str) => {
-    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  // Fonction de nettoyage ultime : Tout en majuscule et sans accent
+  const simplify = (str) => {
+    if (!str) return "";
+    return str
+      .toString()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .trim();
   };
 
   const handleLastNameChange = async (e) => {
-    const upperName = e.target.value.toUpperCase();
-    setFormData({ ...formData, last_name: upperName });
+    const inputName = e.target.value;
+    const upperInput = inputName.toUpperCase(); // Pour l'affichage dans le champ
+    
+    setFormData({ ...formData, last_name: upperInput });
 
-    if (upperName.length > 2) {
+    if (upperInput.length > 2) {
+      // On cherche de manière large dans Supabase
       const { data } = await supabase
         .from('employees')
         .select('*')
-        .ilike('last_name', `%${upperName}%`);
+        .ilike('last_name', `%${upperInput}%`);
 
       if (data && data.length > 0) {
-        const found = data.find(emp => stripAccents(emp.last_name) === stripAccents(upperName));
+        // COMPARAISON INTELLIGENTE :
+        // On simplifie ce qu'on a tapé ET chaque nom de la base pour comparer
+        const found = data.find(emp => simplify(emp.last_name) === simplify(upperInput));
+        
         if (found) {
           const { id, created_at, ...rest } = found;
-          // On remplit le formulaire avec ce qu'on a trouvé en base
           setFormData({
-            last_name: rest.last_name || upperName,
+            last_name: rest.last_name || upperInput, // On garde l'orthographe exacte de la DB
             first_name: rest.first_name || '',
             ssn: rest.ssn || '',
             email: rest.email || '',
@@ -47,6 +59,8 @@ const EmployeeForm = ({ onEmployeeSelect }) => {
         } else {
           setExistingId(null);
         }
+      } else {
+        setExistingId(null);
       }
     }
   };
@@ -66,30 +80,22 @@ const EmployeeForm = ({ onEmployeeSelect }) => {
     };
 
     if (existingId) {
-      // MISE À JOUR : On update l'employé existant avec les nouvelles infos
       const { data, error } = await supabase
         .from('employees')
         .update(dataToSave)
         .eq('id', existingId)
         .select();
 
-      if (error) {
-        alert("Erreur lors de la mise à jour : " + error.message);
-      } else {
-        onEmployeeSelect(data[0]);
-      }
+      if (error) alert("Erreur mise à jour : " + error.message);
+      else onEmployeeSelect(data[0]);
     } else {
-      // CRÉATION : Nouvel employé
       const { data, error } = await supabase
         .from('employees')
         .insert([dataToSave])
         .select();
 
-      if (error) {
-        alert("Erreur lors de l'enregistrement : " + error.message);
-      } else if (data && data.length > 0) {
-        onEmployeeSelect(data[0]);
-      }
+      if (error) alert("Erreur enregistrement : " + error.message);
+      else onEmployeeSelect(data[0]);
     }
   };
 
@@ -97,8 +103,14 @@ const EmployeeForm = ({ onEmployeeSelect }) => {
     <div style={{ maxWidth: '500px', margin: 'auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px', backgroundColor: '#fff' }}>
       <h2 style={{ textAlign: 'center' }}>Fiche de l'Extra</h2>
       <form onSubmit={handleSubmit}>
-        <label style={labelStyle}>Nom de famille {existingId && "✅ (Existant)"}</label>
-        <input style={inputStyle} placeholder="NOM" value={formData.last_name} onChange={handleLastNameChange} required />
+        <label style={labelStyle}>Nom de famille {existingId ? "✅ (Reconnu)" : ""}</label>
+        <input 
+          style={inputStyle} 
+          placeholder="NOM" 
+          value={formData.last_name} 
+          onChange={handleLastNameChange} 
+          required 
+        />
 
         <label style={labelStyle}>Prénom</label>
         <input style={inputStyle} placeholder="Prénom" value={formData.first_name} onChange={(e) => setFormData({...formData, first_name: e.target.value})} required />
