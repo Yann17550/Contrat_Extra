@@ -8,9 +8,11 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
   const [isParaphed, setIsParaphed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const formatDate = (dateStr) => new Date(dateStr).toLocaleDateString('fr-FR');
+
   const handleFinalSubmit = async () => {
     if (!isParaphed) {
-      alert("Veuillez apposer votre paraphe (initiales) avant de signer.");
+      alert("Veuillez apposer votre paraphe (initiales) dans la zone bleue.");
       return;
     }
 
@@ -43,22 +45,28 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
 
   return (
     <div style={containerStyle}>
-      <h2 style={headerStyle}>LECTURE ET SIGNATURE DU CONTRAT</h2>
+      <h2 style={headerStyle}>LECTURE ET SIGNATURE</h2>
       
       <div style={scrollBox}>
         <section style={sectionStyle}>
-          <p><strong>ENTRE LES SOUSSIGNÉS :</strong></p>
-          <p>L'établissement [NOM] et M./Mme <strong>{employee.last_name} {employee.first_name}</strong>.</p>
+          <p><strong>ARTICLE 1 - PARTIES :</strong></p>
+          <p>L'établissement [NOM] d'une part,</p>
+          <p>Et M./Mme <strong>{employee.last_name} {employee.first_name}</strong>,<br/>
+          Né(e) le {formatDate(employee.birth_date)} à {employee.birth_place},<br/>
+          Demeurant au <strong>{employee.address}</strong>,<br/>
+          Sécurité Sociale : {employee.ssn}.</p>
         </section>
 
         <section style={sectionStyle}>
-          <p><strong>ARTICLE 1 - MISSION :</strong></p>
-          <p>Le salarié est engagé en qualité de {contract.job_title} du {contract.start_date} au {contract.end_date}.</p>
+          <p><strong>ARTICLE 2 - MISSION :</strong></p>
+          <p>Le salarié est engagé comme <strong>{contract.job_title}</strong>.</p>
+          <p>Début : {formatDate(contract.start_date)} à {contract.start_time}.<br/>
+          Fin : {formatDate(contract.end_date)} à {contract.end_time}.</p>
         </section>
 
         {/* ZONE DE PARAPHE */}
         <div style={parapheContainer}>
-          <p style={{ fontSize: '12px', marginBottom: '5px' }}>Paraphe (Initiales) :</p>
+          <p style={{ fontSize: '12px', marginBottom: '5px', fontWeight: 'bold' }}>Paraphe (Initiales) :</p>
           <div style={canvasBorder}>
             <SignatureCanvas 
               ref={parapheCanvas} 
@@ -71,8 +79,9 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
         </div>
 
         <section style={sectionStyle}>
-          <p><strong>ARTICLE 2 - RÉMUNÉRATION :</strong></p>
-          <p>Taux horaire brut : {contract.hourly_rate_brut} €. Total estimé : {contract.total_amount} €.</p>
+          <p><strong>ARTICLE 3 - RÉMUNÉRATION :</strong></p>
+          <p>Taux horaire : {contract.hourly_rate_brut} € brut.<br/>
+          Total brut estimé : {contract.total_amount} €.</p>
         </section>
 
         {/* ZONE DE SIGNATURE FINALE */}
@@ -90,7 +99,7 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
       </div>
 
       <div style={footerActions}>
-        <button onClick={onBack} disabled={isSubmitting} style={backBtn}>Retour aux réglages</button>
+        <button onClick={onBack} disabled={isSubmitting} style={backBtn}>Modifier</button>
         <button 
           onClick={handleFinalSubmit} 
           disabled={!isParaphed || isSubmitting} 
@@ -106,8 +115,8 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
 const containerStyle = { maxWidth: '600px', margin: 'auto', padding: '20px', backgroundColor: '#fff', border: '1px solid #ccc', borderRadius: '8px' };
 const headerStyle = { textAlign: 'center', fontSize: '18px', textDecoration: 'underline', marginBottom: '15px' };
 const scrollBox = { height: '450px', overflowY: 'scroll', border: '1px solid #eee', padding: '15px', backgroundColor: '#f9f9f9' };
-const sectionStyle = { marginBottom: '20px', fontSize: '14px', lineHeight: '1.4' };
-const parapheContainer = { textAlign: 'right', marginBottom: '20px', padding: '10px', border: '1px dashed #3498db' };
+const sectionStyle = { marginBottom: '20px', fontSize: '14px', lineHeight: '1.5' };
+const parapheContainer = { textAlign: 'right', marginBottom: '20px', padding: '10px', border: '1px dashed #3498db', backgroundColor: '#ebf5fb' };
 const signatureContainer = { marginTop: '30px', padding: '15px', border: '1px solid #000', backgroundColor: '#fff' };
 const canvasBorder = { border: '1px solid #ddd', display: 'inline-block', backgroundColor: '#fff' };
 const miniBtn = { fontSize: '10px', display: 'block', marginLeft: 'auto', marginTop: '5px', cursor: 'pointer' };
