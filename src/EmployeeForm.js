@@ -31,10 +31,19 @@ const EmployeeForm = ({ onEmployeeSelect }) => {
       if (data && data.length > 0) {
         const found = data.find(emp => stripAccents(emp.last_name) === stripAccents(upperName));
         if (found) {
-          // On sépare l'ID des données du formulaire pour ne pas l'envoyer dans l'insert
           const { id, created_at, ...rest } = found;
-          setFormData(rest);
-          setExistingId(id); // On mémorise qu'il existe déjà
+          // On remplit le formulaire avec ce qu'on a trouvé en base
+          setFormData({
+            last_name: rest.last_name || upperName,
+            first_name: rest.first_name || '',
+            ssn: rest.ssn || '',
+            email: rest.email || '',
+            phone: rest.phone || '',
+            birth_date: rest.birth_date || '',
+            birth_place: rest.birth_place || '',
+            address: rest.address || ''
+          });
+          setExistingId(id);
         } else {
           setExistingId(null);
         }
@@ -45,21 +54,40 @@ const EmployeeForm = ({ onEmployeeSelect }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    const finalData = {
-      ...formData,
+    const dataToSave = {
       last_name: formData.last_name.toUpperCase(),
-      first_name: formData.first_name.charAt(0).toUpperCase() + formData.first_name.slice(1).toLowerCase()
+      first_name: formData.first_name.charAt(0).toUpperCase() + formData.first_name.slice(1).toLowerCase(),
+      ssn: formData.ssn,
+      email: formData.email,
+      phone: formData.phone,
+      birth_date: formData.birth_date,
+      birth_place: formData.birth_place,
+      address: formData.address
     };
 
     if (existingId) {
-      // Si l'employé existe déjà, on le sélectionne simplement avec son ID
-      onEmployeeSelect({ id: existingId, ...finalData });
+      // MISE À JOUR : On update l'employé existant avec les nouvelles infos
+      const { data, error } = await supabase
+        .from('employees')
+        .update(dataToSave)
+        .eq('id', existingId)
+        .select();
+
+      if (error) {
+        alert("Erreur lors de la mise à jour : " + error.message);
+      } else {
+        onEmployeeSelect(data[0]);
+      }
     } else {
-      // Sinon, on le crée
-      const { data, error } = await supabase.from('employees').insert([finalData]).select();
+      // CRÉATION : Nouvel employé
+      const { data, error } = await supabase
+        .from('employees')
+        .insert([dataToSave])
+        .select();
+
       if (error) {
         alert("Erreur lors de l'enregistrement : " + error.message);
-      } else {
+      } else if (data && data.length > 0) {
         onEmployeeSelect(data[0]);
       }
     }
@@ -69,7 +97,7 @@ const EmployeeForm = ({ onEmployeeSelect }) => {
     <div style={{ maxWidth: '500px', margin: 'auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px', backgroundColor: '#fff' }}>
       <h2 style={{ textAlign: 'center' }}>Fiche de l'Extra</h2>
       <form onSubmit={handleSubmit}>
-        <label style={labelStyle}>Nom de famille {existingId && "✅"}</label>
+        <label style={labelStyle}>Nom de famille {existingId && "✅ (Existant)"}</label>
         <input style={inputStyle} placeholder="NOM" value={formData.last_name} onChange={handleLastNameChange} required />
 
         <label style={labelStyle}>Prénom</label>
@@ -78,17 +106,20 @@ const EmployeeForm = ({ onEmployeeSelect }) => {
         <label style={labelStyle}>Date de Naissance</label>
         <input type="date" style={inputStyle} value={formData.birth_date} onChange={(e) => setFormData({...formData, birth_date: e.target.value})} required />
 
-        <label style={labelStyle}>Lieu de naissance</label>
-        <input style={inputStyle} placeholder="Ville" value={formData.birth_place} onChange={(e) => setFormData({...formData, birth_place: e.target.value})} required />
+        <label style={labelStyle}>Lieu de naissance (Ville + Dépt)</label>
+        <input style={inputStyle} placeholder="Ex: Paris (75)" value={formData.birth_place} onChange={(e) => setFormData({...formData, birth_place: e.target.value})} required />
 
         <label style={labelStyle}>Sécurité Sociale</label>
-        <input style={inputStyle} placeholder="Numéro SS" value={formData.ssn} onChange={(e) => setFormData({...formData, ssn: e.target.value})} required />
+        <input style={inputStyle} placeholder="15 chiffres" value={formData.ssn} onChange={(e) => setFormData({...formData, ssn: e.target.value})} required />
         
         <label style={labelStyle}>Téléphone</label>
         <input style={inputStyle} type="tel" value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} />
         
+        <label style={labelStyle}>Adresse postale</label>
+        <textarea style={inputStyle} placeholder="N°, rue, CP, Ville" value={formData.address} onChange={(e) => setFormData({...formData, address: e.target.value})} />
+        
         <button type="submit" style={buttonStyle}>
-          {existingId ? "Utiliser ce profil" : "Enregistrer et continuer"}
+          {existingId ? "Mettre à jour et continuer" : "Enregistrer et continuer"}
         </button>
       </form>
     </div>
