@@ -1,5 +1,5 @@
 // Ce fichier permet de connecter votre interface à votre base de données Supabase
-import { createClient } from '@supabase/supabase-client';
+import { createClient } from '@supabase/supabase-js';
 
 // Vos identifiants de connexion
 const supabaseUrl = 'https://qnhhdpzsqbxqtnjaotyt.supabase.co';
