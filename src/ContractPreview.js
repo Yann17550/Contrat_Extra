@@ -8,106 +8,130 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
   const [isParaphed, setIsParaphed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Formattage de la date pour l'affichage écran uniquement
   const formatDate = (dateStr) => {
     if (!dateStr) return "";
     return new Date(dateStr).toLocaleDateString('fr-FR');
   };
 
   const handleFinalSubmit = async () => {
-    // Blocage de sécurité si les conditions ne sont pas remplies
     if (!isParaphed) {
-      alert("Veuillez apposer votre paraphe (initiales) dans la zone bleue avant de signer.");
+      alert("Veuillez apposer votre paraphe avant de signer.");
       return;
     }
-
     if (signatureCanvas.current.isEmpty()) {
-      alert("La signature finale est obligatoire pour valider le contrat.");
+      alert("La signature est obligatoire.");
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      // 1. Récupération de l'adresse IP depuis le code (Client-side)
+      // 1. Récupération de l'IP
       let userIp = "0.0.0.0";
       try {
         const ipRes = await fetch('https://api.ipify.org?format=json');
-        if (ipRes.ok) {
-          const ipData = await ipRes.json();
-          userIp = ipData.ip;
-        }
-      } catch (e) {
-        console.warn("Échec récupération IP, utilisation du fallback.");
-      }
+        const ipData = await ipRes.json();
+        userIp = ipData.ip;
+      } catch (e) { console.warn("IP non dispo"); }
 
-      // 2. Préparation de l'heure locale exacte (Format YYYY-MM-DD HH:mm:ss)
-      // On force le format ISO local pour éviter le décalage UTC de Supabase
+      // 2. Préparation des dates et images
       const now = new Date();
       const offset = now.getTimezoneOffset() * 60000;
       const signedAtLocal = (new Date(now - offset)).toISOString().replace('T', ' ').split('.')[0];
-
-      // 3. Préparation des cellules de shift (Format strict YYYY-MM-DD HH:mm:ss)
-      // On envoie le résultat complet de la cellule depuis le code
       const shiftStartFull = `${contract.start_date} ${contract.start_time}:00`;
       const shiftEndFull = `${contract.end_date} ${contract.end_time}:00`;
-
-      // 4. Capture de l'image de signature
+      
       const signatureImage = signatureCanvas.current.getTrimmedCanvas().toDataURL('image/png');
+      const parapheImage = parapheCanvas.current.getTrimmedCanvas().toDataURL('image/png');
 
-      // 5. Envoi du payload complet à Supabase
-      const { data, error } = await supabase.from('contracts').insert([{
+      // 3. Enregistrement Supabase
+      const { error: dbError } = await supabase.from('contracts').insert([{
         employee_id: employee.id,
         contract_date: contract.start_date,
         job_title: contract.job_title,
         hourly_rate_brut: parseFloat(contract.hourly_rate_brut.replace(',', '.')),
-        shift_start: shiftStartFull, // Résultat de cellule envoyé depuis le code
-        shift_end: shiftEndFull,     // Résultat de cellule envoyé depuis le code
+        shift_start: shiftStartFull,
+        shift_end: shiftEndFull,
         signature_image: signatureImage,
-        signed_at: signedAtLocal,     // Heure locale envoyée depuis le code
-        ip_address: userIp           // IP envoyée depuis le code
-      }]).select();
+        signed_at: signedAtLocal,
+        ip_address: userIp
+      }]);
 
-      if (error) {
-        console.error("Détails de l'erreur Supabase :", error);
-        alert(`Erreur lors de l'enregistrement : ${error.message}`);
-        setIsSubmitting(false);
+      if (dbError) throw dbError;
+
+      // 4. Génération du PDF en mémoire (via le script chargé dans index.html)
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      
+      doc.setFontSize(16);
+      doc.text("CONTRAT DE TRAVAIL (EXTRA)", 105, 20, { align: 'center' });
+      doc.setFontSize(10);
+      doc.text(`Employé : ${employee.first_name} ${employee.last_name}`, 20, 40);
+      doc.text(`SSN : ${employee.ssn}`, 20, 45);
+      doc.text(`Adresse : ${employee.address}`, 20, 50);
+      doc.text(`Poste : ${contract.job_title}`, 20, 60);
+      doc.text(`Début : ${shiftStartFull}`, 20, 65);
+      doc.text(`Fin : ${shiftEndFull}`, 20, 70);
+      doc.text(`Rémunération : ${contract.hourly_rate_brut} Euros/h brut`, 20, 80);
+      doc.text(`Total estimé : ${contract.total_amount} Euros`, 20, 85);
+      
+      doc.text("Paraphe :", 150, 90);
+      doc.addImage(parapheImage, 'PNG', 150, 95, 20, 10);
+      
+      doc.text("Signature :", 20, 110);
+      doc.addImage(signatureImage, 'PNG', 20, 115, 50, 25);
+      doc.text(`Signé le : ${signedAtLocal} (IP: ${userIp})`, 20, 150);
+
+      // Conversion du PDF en Base64 pour l'envoi
+      const pdfBase64 = doc.output('datauristring').split(',')[1];
+
+      // 5. Appel de la Edge Function pour l'envoi d'email
+      const { data: emailData, error: emailError } = await supabase.functions.invoke('send-contract-email', {
+        body: {
+          employeeEmail: employee.email,
+          myEmail: "oleron.pizza@gmail.com", // Ton email de gestion
+          employeeName: `${employee.first_name} ${employee.last_name}`,
+          pdfBase64: pdfBase64,
+          fileName: `Contrat_${employee.last_name}_${contract.start_date}.pdf`
+        }
+      });
+
+      if (emailError) {
+        console.error("Erreur Email:", emailError);
+        alert("Contrat enregistré, mais l'envoi de l'email a échoué.");
       } else {
-        alert("Contrat enregistré avec succès (IP et Heure locale validées) !");
-        onConfirm();
+        alert("Contrat validé, enregistré et envoyé par email !");
       }
+
+      onConfirm();
+
     } catch (err) {
-      console.error("Erreur système lors de la soumission :", err);
-      alert("Une erreur imprévue est survenue.");
+      console.error(err);
+      alert("Erreur critique : " + err.message);
       setIsSubmitting(false);
     }
   };
 
   return (
     <div style={containerStyle}>
-      <h2 style={headerStyle}>LECTURE ET SIGNATURE DU CONTRAT</h2>
-      
+      <h2 style={headerStyle}>LECTURE ET SIGNATURE</h2>
       <div style={scrollBox}>
         <section style={sectionStyle}>
-          <p><strong>ARTICLE 1 - PARTIES :</strong></p>
-          <p>L'établissement [NOM DE L'ETABLISSEMENT] d'une part,</p>
-          <p>Et M./Mme <strong>{employee.last_name} {employee.first_name}</strong>,<br/>
-          Né(e) le {formatDate(employee.birth_date)} à {employee.birth_place},<br/>
-          Demeurant au <strong>{employee.address}</strong>,<br/>
-          Numéro de Sécurité Sociale : {employee.ssn}.</p>
-          <p>Email : {employee.email || 'Non renseigné'} | Tél : {employee.phone || 'Non renseigné'}</p>
+          <p><strong>EMPLOYÉ :</strong> {employee.last_name} {employee.first_name}</p>
+          <p>Né(e) le {formatDate(employee.birth_date)} à {employee.birth_place}</p>
+          <p>Demeurant : {employee.address}</p>
+          <p>SSN : {employee.ssn}</p>
         </section>
 
         <section style={sectionStyle}>
-          <p><strong>ARTICLE 2 - MISSION :</strong></p>
-          <p>Le salarié est engagé en qualité de <strong>{contract.job_title}</strong>.</p>
-          <p>La mission débutera le <strong>{formatDate(contract.start_date)}</strong> à <strong>{contract.start_time}</strong>.<br/>
-          Elle se terminera le <strong>{formatDate(contract.end_date)}</strong> à <strong>{contract.end_time}</strong>.</p>
+          <p><strong>MISSION :</strong> {contract.job_title}</p>
+          <p>Du {formatDate(contract.start_date)} à {contract.start_time}</p>
+          <p>Au {formatDate(contract.end_date)} à {contract.end_time}</p>
+          <p>Taux : {contract.hourly_rate_brut} €/h brut</p>
         </section>
 
-        {/* ZONE DE PARAPHE - OBLIGATOIRE POUR DEBLOQUER LA SUITE */}
         <div style={parapheContainer}>
-          <p style={{ fontSize: '12px', marginBottom: '5px', fontWeight: 'bold' }}>Paraphe (Initiales) dans cette zone bleue :</p>
+          <p style={{ fontSize: '12px', fontWeight: 'bold' }}>Paraphe (Initiales) :</p>
           <div style={canvasBorder}>
             <SignatureCanvas 
               ref={parapheCanvas} 
@@ -116,23 +140,11 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
               onEnd={() => setIsParaphed(true)}
             />
           </div>
-          <button 
-            onClick={() => { parapheCanvas.current.clear(); setIsParaphed(false); }} 
-            style={miniBtn}
-          >
-            Effacer paraphe
-          </button>
+          <button onClick={() => { parapheCanvas.current.clear(); setIsParaphed(false); }} style={miniBtn}>Effacer</button>
         </div>
 
-        <section style={sectionStyle}>
-          <p><strong>ARTICLE 3 - RÉMUNÉRATION :</strong></p>
-          <p>Le taux horaire brut est fixé à {contract.hourly_rate_brut} €.<br/>
-          Pour la durée prévue, le montant total brut estimé est de : <strong>{contract.total_amount} €</strong>.</p>
-        </section>
-
-        {/* ZONE DE SIGNATURE FINALE */}
         <div style={signatureContainer}>
-          <p style={{ fontWeight: 'bold', marginBottom: '10px' }}>Signature finale du salarié :</p>
+          <p style={{ fontWeight: 'bold' }}>Signature finale :</p>
           <div style={canvasBorder}>
             <SignatureCanvas 
               ref={signatureCanvas} 
@@ -140,41 +152,30 @@ const ContractPreview = ({ employee, contract, onConfirm, onBack }) => {
               canvasProps={{ width: 300, height: 150, className: 'signatureCanvas' }} 
             />
           </div>
-          <button onClick={() => signatureCanvas.current.clear()} style={miniBtn}>Effacer signature</button>
+          <button onClick={() => signatureCanvas.current.clear()} style={miniBtn}>Effacer</button>
         </div>
       </div>
 
       <div style={footerActions}>
-        <button 
-          onClick={onBack} 
-          disabled={isSubmitting} 
-          style={backBtn}
-        >
-          Retour aux conditions
-        </button>
-        <button 
-          onClick={handleFinalSubmit} 
-          disabled={!isParaphed || isSubmitting} 
-          style={{ ...submitBtn, opacity: isParaphed ? 1 : 0.5 }}
-        >
-          {isSubmitting ? "Enregistrement en cours..." : "Officialiser le contrat"}
+        <button onClick={onBack} disabled={isSubmitting} style={backBtn}>Retour</button>
+        <button onClick={handleFinalSubmit} disabled={!isParaphed || isSubmitting} style={submitBtn}>
+          {isSubmitting ? "Traitement..." : "Officialiser et Envoyer"}
         </button>
       </div>
     </div>
   );
 };
 
-// --- STYLES (Conservés intégralement sans simplification) ---
 const containerStyle = { maxWidth: '600px', margin: 'auto', padding: '20px', backgroundColor: '#fff', border: '1px solid #ccc', borderRadius: '8px' };
-const headerStyle = { textAlign: 'center', fontSize: '18px', textDecoration: 'underline', marginBottom: '15px', color: '#2c3e50' };
-const scrollBox = { height: '450px', overflowY: 'scroll', border: '1px solid #eee', padding: '15px', backgroundColor: '#f9f9f9', borderRadius: '4px' };
-const sectionStyle = { marginBottom: '20px', fontSize: '14px', lineHeight: '1.5', color: '#34495e' };
-const parapheContainer = { textAlign: 'right', marginBottom: '20px', padding: '10px', border: '1px dashed #3498db', backgroundColor: '#ebf5fb', borderRadius: '4px' };
-const signatureContainer = { marginTop: '30px', padding: '15px', border: '1px solid #2c3e50', backgroundColor: '#fff', borderRadius: '4px' };
+const headerStyle = { textAlign: 'center', fontSize: '18px', textDecoration: 'underline', marginBottom: '15px' };
+const scrollBox = { height: '450px', overflowY: 'scroll', border: '1px solid #eee', padding: '15px', backgroundColor: '#f9f9f9' };
+const sectionStyle = { marginBottom: '20px', fontSize: '14px', lineHeight: '1.5' };
+const parapheContainer = { textAlign: 'right', marginBottom: '20px', padding: '10px', border: '1px dashed #3498db', backgroundColor: '#ebf5fb' };
+const signatureContainer = { marginTop: '30px', padding: '15px', border: '1px solid #000', backgroundColor: '#fff' };
 const canvasBorder = { border: '1px solid #ddd', display: 'inline-block', backgroundColor: '#fff' };
-const miniBtn = { fontSize: '10px', display: 'block', marginLeft: 'auto', marginTop: '5px', cursor: 'pointer', color: '#e74c3c', background: 'none', border: 'none', textDecoration: 'underline' };
+const miniBtn = { fontSize: '10px', display: 'block', marginLeft: 'auto', marginTop: '5px', cursor: 'pointer', background: 'none', border: 'none', textDecoration: 'underline' };
 const footerActions = { display: 'flex', gap: '10px', marginTop: '20px' };
-const submitBtn = { flex: 2, padding: '15px', backgroundColor: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' };
-const backBtn = { flex: 1, padding: '15px', backgroundColor: '#95a5a6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'normal' };
+const submitBtn = { flex: 2, padding: '15px', backgroundColor: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
+const backBtn = { flex: 1, padding: '15px', backgroundColor: '#95a5a6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' };
 
 export default ContractPreview;
